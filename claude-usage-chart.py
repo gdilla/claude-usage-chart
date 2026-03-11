@@ -201,9 +201,10 @@ def chart_matplotlib(dates, projects, data, metric, output_path=None):
                     fontsize=6, color="#444444")
 
     grand_total = sum(bottom)
+    date_range = f"{dates[0]} to {dates[-1]}" if len(dates) > 1 else dates[0]
     ax.set_title(
         f"Claude Code Token Usage ({metric} tokens)\n"
-        f"Total: {format_tokens(grand_total)}",
+        f"{date_range}  ·  Total: {format_tokens(grand_total)}",
         fontsize=14, fontweight="bold")
     ax.set_ylabel("Tokens")
     ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
