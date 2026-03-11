@@ -14,11 +14,7 @@ cd claude-usage-chart
 # Terminal chart (no dependencies needed)
 python3 claude-usage-chart.py --terminal
 
-# Graphical chart (requires matplotlib)
-pip install matplotlib
-python3 claude-usage-chart.py
-
-# Or use uv to run without installing anything
+# Graphical chart (uses uv to auto-install matplotlib)
 uv run --with matplotlib python3 claude-usage-chart.py
 ```
 
@@ -45,13 +41,13 @@ Claude Code stores session transcripts as JSONL files in `~/.claude/projects/`. 
 
 ```bash
 # Last 7 days, top 5 projects
-python3 claude-usage-chart.py --days 7 --top 5
+uv run --with matplotlib python3 claude-usage-chart.py --days 7 --top 5
 
 # Total tokens (input + output) for the last 2 weeks
-python3 claude-usage-chart.py --days 14 --metric total
+uv run --with matplotlib python3 claude-usage-chart.py --days 14 --metric total
 
 # Save to file
-python3 claude-usage-chart.py --output usage.png
+uv run --with matplotlib python3 claude-usage-chart.py --output usage.png
 ```
 
 ## Use as a Claude Code Slash Command
@@ -91,7 +87,7 @@ You can set this up as a `/burn` command so you (or your team) can type `/burn` 
    After running, briefly summarize what the chart shows (total tokens, top project, date range).
    ```
 
-   > **Note:** If you don't have [uv](https://docs.astral.sh/uv/) installed, replace the `uv run --with matplotlib` prefix with just `python3` (and install matplotlib separately).
+   > **Note:** This requires [uv](https://docs.astral.sh/uv/). If you don't have it, install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
 ### Usage in Claude Code
 
@@ -105,9 +101,9 @@ You can set this up as a `/burn` command so you (or your team) can type `/burn` 
 
 ## Requirements
 
-- **Python 3.9+** (uses only stdlib)
-- **matplotlib** (optional — for graphical charts; falls back to terminal output)
-- **uv** (optional — for running with matplotlib without installing it globally)
+- **[uv](https://docs.astral.sh/uv/)** — manages Python and dependencies automatically
+- **Python 3.9+** (uses only stdlib; uv will install Python if needed)
+- **matplotlib** (optional — for graphical charts; falls back to terminal output; auto-installed by `uv run --with matplotlib`)
 
 ## License
 
