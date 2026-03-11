@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["matplotlib"]
+# ///
 """Visualize Claude Code token usage by day and project.
 
 Scans ~/.claude/projects/*/*.jsonl, extracts token usage from assistant
 messages, and produces a stacked bar chart (matplotlib or terminal fallback).
 
 Usage:
-    python3 claude-usage-chart.py                      # last 30 days, top 8 projects
-    python3 claude-usage-chart.py --days 7 --top 5     # last week, top 5
-    python3 claude-usage-chart.py --metric total        # input + output tokens
-    python3 claude-usage-chart.py --output usage.png    # save to file
-    python3 claude-usage-chart.py --terminal            # force terminal chart
+    uv run claude-usage-chart.py                       # last 30 days, top 8 projects (matplotlib auto-installed)
+    uv run claude-usage-chart.py --days 7 --top 5      # last week, top 5
+    uv run claude-usage-chart.py --output usage.png     # save to file
+    python3 claude-usage-chart.py --terminal            # terminal chart, no dependencies needed
 """
 
 import argparse

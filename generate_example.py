@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["matplotlib"]
+# ///
 """Generate a fake example chart for the README."""
 import random
 from datetime import datetime, timedelta

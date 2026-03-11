@@ -2,7 +2,7 @@
 
 ## Tech Stack
 - Python 3.9+ (stdlib only, no required dependencies)
-- matplotlib (optional, for graphical charts)
+- matplotlib (declared via PEP 723 inline script metadata; auto-installed by `uv run`)
 - Single-file CLI script: `claude-usage-chart.py`
 - Helper script: `generate_example.py` (generates fake chart for README)
 
@@ -36,9 +36,9 @@ claude-usage-chart/
 - Worktree marker in cwd: `/.claude/worktrees/`
 
 ## Dev Workflow
-- Run with: `uv run --with matplotlib python3 claude-usage-chart.py`
+- Run with: `uv run claude-usage-chart.py`
 - Test terminal: `python3 claude-usage-chart.py --terminal --days 7`
-- Generate example: `uv run --with matplotlib python3 generate_example.py`
+- Generate example: `uv run generate_example.py`
 
 ## Code Search
 This project is indexed with codebase-memory-mcp. Use `search_code` and `query_graph` tools to explore the codebase.
