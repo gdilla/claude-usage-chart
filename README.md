@@ -2,7 +2,7 @@
 
 Visualize your [Claude Code](https://claude.ai/claude-code) token usage broken down by day and project.
 
-![Example chart](https://github.com/user-attachments/assets/placeholder.png)
+![Example chart](example.png)
 
 ## Quick Start
 
