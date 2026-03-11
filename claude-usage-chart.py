@@ -194,7 +194,17 @@ def chart_matplotlib(dates, projects, data, metric, output_path=None):
                color=colors[i], width=0.8, edgecolor="white", linewidth=0.3)
         bottom = [b + v for b, v in zip(bottom, values)]
 
-    ax.set_title(f"Claude Code Token Usage ({metric} tokens)", fontsize=14, fontweight="bold")
+    # Add daily total labels on top of each bar
+    for i, (x, total) in enumerate(zip(x_dates, bottom)):
+        if total > 0:
+            ax.text(x, total, format_tokens(total), ha="center", va="bottom",
+                    fontsize=6, color="#444444")
+
+    grand_total = sum(bottom)
+    ax.set_title(
+        f"Claude Code Token Usage ({metric} tokens)\n"
+        f"Total: {format_tokens(grand_total)}",
+        fontsize=14, fontweight="bold")
     ax.set_ylabel("Tokens")
     ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_tokens(int(x))))
