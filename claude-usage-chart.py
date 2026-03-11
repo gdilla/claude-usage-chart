@@ -298,6 +298,8 @@ def main():
                         help="Save chart to PNG file instead of displaying")
     parser.add_argument("--terminal", action="store_true",
                         help="Force terminal chart even if matplotlib is available")
+    parser.add_argument("--project", type=str, default=None,
+                        help="Filter to a specific project name (or pass a cwd path to auto-derive)")
     args = parser.parse_args()
 
     base_dir = os.path.expanduser("~/.claude/projects")
@@ -305,10 +307,23 @@ def main():
         print(f"Error: {base_dir} not found.", file=sys.stderr)
         sys.exit(1)
 
+    # If --project looks like a path, derive the project name from it
+    project_filter = None
+    if args.project:
+        if "/" in args.project:
+            project_filter = derive_project_name(args.project)
+        else:
+            project_filter = args.project
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
 
     print(f"Scanning transcripts (last {args.days} days)...", file=sys.stderr)
     records = list(parse_all_transcripts(base_dir, cutoff))
+
+    if project_filter:
+        records = [r for r in records if r["project"] == project_filter]
+        print(f"Filtered to project: {project_filter}", file=sys.stderr)
+
     print(f"Found {len(records):,} assistant messages.", file=sys.stderr)
 
     if not records:
