@@ -36,6 +36,7 @@ Claude Code stores session transcripts as JSONL files in `~/.claude/projects/`. 
 | `--metric` | output | Token type: `output`, `input`, `total`, or `cache` |
 | `--output PATH` | — | Save chart as PNG instead of displaying |
 | `--terminal` | — | Force terminal chart (ANSI colored bars) |
+| `--project NAME` | — | Filter to a specific project (name or cwd path) |
 
 ## Examples
 
@@ -92,12 +93,17 @@ You can set this up as a `/burn` command so you (or your team) can type `/burn` 
 ### Usage in Claude Code
 
 ```
-/burn                          # 30-day chart, opens in Preview
-/burn --days 7                 # last week
-/burn --days 14 --top 5        # 2 weeks, top 5 projects
-/burn --terminal               # quick terminal view, no image
-/burn --metric total --days 7  # total tokens (input + output)
+/burn                              # 30-day chart, opens in Preview
+/burn --days 7                     # last week
+/burn --days 14 --top 5            # 2 weeks, top 5 projects
+/burn --terminal                   # quick terminal view, no image
+/burn --metric total --days 7      # total tokens (input + output)
+/burn --this                       # chart for the current project only
+/burn --this --days 14             # current project, last 2 weeks
+/burn --this --terminal            # current project, terminal view
 ```
+
+> **Tip:** `--this` is a shortcut that filters the chart to whatever project you're working in. Under the hood it passes `--project <your cwd>` to the script.
 
 ## Requirements
 
