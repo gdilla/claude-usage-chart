@@ -5,6 +5,7 @@ from claude_usage_analytics import (
     get_record_cost,
     API_PRICING,
 )
+from claude_usage_analytics import compute_burn_rate
 from tests.conftest import make_record
 
 
@@ -72,3 +73,37 @@ class TestRecordCost:
         rec = make_record(model="<synthetic>", input_tokens=1_000_000, output_tokens=1_000_000)
         cost = get_record_cost(rec)
         assert cost == 0.0
+
+
+class TestBurnRate:
+    def test_daily_avg(self, sample_records):
+        stats = compute_burn_rate(sample_records, metric="output", days=14)
+        assert stats["daily_avg"] > 0
+        assert stats["total"] == sum(
+            r["output_tokens"] for r in sample_records
+        )
+
+    def test_weekday_higher_than_weekend(self, sample_records):
+        stats = compute_burn_rate(sample_records, metric="output", days=14)
+        assert stats["weekday_avg"] > stats["weekend_avg"]
+
+    def test_weekly_avg(self, sample_records):
+        stats = compute_burn_rate(sample_records, metric="output", days=14)
+        assert abs(stats["weekly_avg"] - stats["daily_avg"] * 7) < 1
+
+    def test_trend(self, sample_records):
+        stats = compute_burn_rate(sample_records, metric="output", days=14)
+        # Fixture increases tokens each day (day_offset * 50 on output)
+        assert stats["trend_pct"] > 0
+
+    def test_total_metric(self, sample_records):
+        stats = compute_burn_rate(sample_records, metric="total", days=14)
+        expected = sum(
+            r["input_tokens"] + r["output_tokens"] for r in sample_records
+        )
+        assert stats["total"] == expected
+
+    def test_empty(self, empty_records):
+        stats = compute_burn_rate(empty_records, metric="output", days=14)
+        assert stats["total"] == 0
+        assert stats["daily_avg"] == 0
