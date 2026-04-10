@@ -3,6 +3,7 @@
 Pure functions: records in, stats out. No CLI logic.
 """
 
+import sys
 import statistics
 from collections import defaultdict
 
@@ -327,3 +328,113 @@ def compute_all(records: list, metric: str, days: int, top_n: int) -> dict:
         "projects": compute_project_rankings(records, metric, top_n),
         "cost": compute_api_cost(records, days),
     }
+
+
+def _fmt_tokens(n: int) -> str:
+    """Format token count with K/M suffix."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    elif n >= 1_000:
+        return f"{n / 1_000:.0f}K"
+    return str(n)
+
+
+def _fmt_cost(n: float) -> str:
+    """Format USD cost."""
+    if n >= 1000:
+        return f"${n:,.0f}"
+    return f"${n:.2f}"
+
+
+def _fmt_hour(h: int) -> str:
+    """Format hour as 12h clock."""
+    if h == 0:
+        return "12am"
+    if h == 12:
+        return "12pm"
+    return f"{h}am" if h < 12 else f"{h - 12}pm"
+
+
+def render_terminal_report(stats: dict, metric: str, days: int):
+    """Print ANSI-formatted analytics summary to stdout."""
+    br = stats["burn_rate"]
+    sess = stats["sessions"]
+    hrs = stats["hours"]
+    mix = stats["model_mix"]
+    proj = stats["projects"]
+    cost = stats["cost"]
+
+    w = 60
+
+    # Header
+    print(f"\n\033[1m╔{'═' * (w - 2)}╗\033[0m")
+    title = f"Claude Code Usage Report · Last {days} days"
+    print(f"\033[1m║  {title:<{w - 4}}║\033[0m")
+    print(f"\033[1m╚{'═' * (w - 2)}╝\033[0m")
+
+    # Burn Rate
+    trend_arrow = "▲" if br["trend_pct"] > 0 else "▼" if br["trend_pct"] < 0 else "─"
+    trend_sign = "+" if br["trend_pct"] > 0 else ""
+    print(f"\n\033[1mBURN RATE\033[0m")
+    print(f"  Daily avg:   {_fmt_tokens(br['daily_avg']):>8}    "
+          f"Weekday: {_fmt_tokens(br['weekday_avg'])}   "
+          f"Weekend: {_fmt_tokens(br['weekend_avg'])}")
+    print(f"  Weekly avg:  {_fmt_tokens(br['weekly_avg']):>8}    "
+          f"Trend: {trend_arrow} {trend_sign}{br['trend_pct']:.0f}% vs prior period")
+    print(f"  Total:       {_fmt_tokens(br['total']):>8}    "
+          f"Est. API cost: {_fmt_cost(cost['total'])}")
+
+    # Model Mix
+    if mix["models"]:
+        print(f"\n\033[1mMODEL MIX\033[0m")
+        for m in mix["models"]:
+            label = m["name"].capitalize()
+            print(f"  {label:<12} {m['pct']:>4.0f}%   "
+                  f"{_fmt_tokens(m['total_tokens']):>8} tokens   "
+                  f"{_fmt_cost(m['est_cost'])}")
+
+    # Top Projects
+    if proj:
+        print(f"\n\033[1mTOP PROJECTS\033[0m")
+        for i, p in enumerate(proj, 1):
+            print(f"  {i}. {p['name']:<22} "
+                  f"{_fmt_tokens(p['total_tokens']):>8} tokens   "
+                  f"{p['session_count']:>3} sessions   "
+                  f"{_fmt_cost(p['est_cost'])}")
+
+    # Sessions
+    print(f"\n\033[1mSESSIONS\033[0m")
+    print(f"  Total: {sess['count']}    "
+          f"Avg: {_fmt_tokens(int(sess['avg']))}/session    "
+          f"Largest: {_fmt_tokens(sess['largest_tokens'])} ({sess['largest_project']})")
+
+    # Peak Hours
+    if hrs["hour_totals"]:
+        print(f"\n\033[1mPEAK HOURS\033[0m")
+        max_hour_val = max(hrs["hour_totals"].values()) if hrs["hour_totals"] else 1
+        bar = ""
+        for h in range(24):
+            val = hrs["hour_totals"].get(h, 0)
+            if val > max_hour_val * 0.5:
+                bar += "█"
+            elif val > max_hour_val * 0.2:
+                bar += "▓"
+            elif val > 0:
+                bar += "░"
+            else:
+                bar += "·"
+        end_hour = (hrs["peak_window_start"] + 4) % 24
+        print(f"  {bar}   "
+              f"{_fmt_hour(hrs['peak_window_start'])}–{_fmt_hour(end_hour)} "
+              f"({hrs['peak_window_pct']:.0f}% of {metric} tokens)")
+        print(f"  {'0  3  6  9  12 15 18 21':<24}   "
+              f"Busiest hour: {_fmt_hour(hrs['peak_hour'])} "
+              f"({hrs['peak_hour_pct']:.0f}%)")
+
+        wd_peak = max(hrs["weekday_hours"], key=hrs["weekday_hours"].get) if hrs["weekday_hours"] else 0
+        we_peak = max(hrs["weekend_hours"], key=hrs["weekend_hours"].get) if hrs["weekend_hours"] else 0
+        print(f"  {'':24}   "
+              f"Weekday peak: {_fmt_hour(wd_peak)}   "
+              f"Weekend peak: {_fmt_hour(we_peak)}")
+
+    print()
