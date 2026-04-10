@@ -3,6 +3,7 @@
 Pure functions: records in, stats out. No CLI logic.
 """
 
+import statistics
 from collections import defaultdict
 
 # API pricing per 1M tokens (USD)
@@ -131,4 +132,79 @@ def compute_burn_rate(records: list, metric: str, days: int) -> dict:
         "weekend_avg": int(weekend_avg),
         "total": total,
         "trend_pct": round(trend_pct, 1),
+    }
+
+
+def compute_session_stats(records: list, metric: str, days: int) -> dict:
+    """Compute per-session statistics."""
+    if not records:
+        return {
+            "count": 0, "avg": 0, "median": 0,
+            "largest_tokens": 0, "largest_project": "",
+            "sessions_per_day": 0.0,
+        }
+
+    sessions = defaultdict(lambda: {"total": 0, "project": ""})
+    for r in records:
+        sid = r["session"]
+        sessions[sid]["total"] += _get_metric_value(r, metric)
+        sessions[sid]["project"] = r["project"]
+
+    totals = [s["total"] for s in sessions.values()]
+    count = len(totals)
+    largest_sid = max(sessions, key=lambda k: sessions[k]["total"])
+
+    return {
+        "count": count,
+        "avg": sum(totals) / count,
+        "median": int(statistics.median(totals)),
+        "largest_tokens": sessions[largest_sid]["total"],
+        "largest_project": sessions[largest_sid]["project"],
+        "sessions_per_day": round(count / days, 1) if days > 0 else 0.0,
+    }
+
+
+def compute_hourly_breakdown(records: list, metric: str) -> dict:
+    """Compute hour-of-day usage breakdown."""
+    if not records:
+        return {
+            "hour_totals": {}, "peak_window_start": 0,
+            "peak_window_pct": 0, "peak_hour": 0, "peak_hour_pct": 0,
+            "weekday_hours": {}, "weekend_hours": {},
+        }
+
+    hour_totals = defaultdict(int)
+    weekday_hours = defaultdict(int)
+    weekend_hours = defaultdict(int)
+
+    for r in records:
+        val = _get_metric_value(r, metric)
+        hour_totals[r["hour"]] += val
+        if r["weekday"] < 5:
+            weekday_hours[r["hour"]] += val
+        else:
+            weekend_hours[r["hour"]] += val
+
+    total = sum(hour_totals.values())
+
+    best_start = 0
+    best_sum = 0
+    for start in range(24):
+        window_sum = sum(hour_totals.get((start + h) % 24, 0) for h in range(4))
+        if window_sum > best_sum:
+            best_sum = window_sum
+            best_start = start
+
+    peak_hour = max(hour_totals, key=hour_totals.get) if hour_totals else 0
+
+    return {
+        "hour_totals": dict(hour_totals),
+        "peak_window_start": best_start,
+        "peak_window_pct": round(best_sum / total * 100, 1) if total else 0,
+        "peak_hour": peak_hour,
+        "peak_hour_pct": round(
+            hour_totals.get(peak_hour, 0) / total * 100, 1
+        ) if total else 0,
+        "weekday_hours": dict(weekday_hours),
+        "weekend_hours": dict(weekend_hours),
     }

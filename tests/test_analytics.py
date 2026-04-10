@@ -107,3 +107,55 @@ class TestBurnRate:
         stats = compute_burn_rate(empty_records, metric="output", days=14)
         assert stats["total"] == 0
         assert stats["daily_avg"] == 0
+
+
+from claude_usage_analytics import compute_session_stats, compute_hourly_breakdown
+
+
+class TestSessionStats:
+    def test_session_count(self, sample_records):
+        stats = compute_session_stats(sample_records, metric="output", days=14)
+        # Fixture: 10 weekdays * 5 sessions + 4 weekend days * 2 sessions = 58
+        assert stats["count"] == 58
+
+    def test_avg_tokens(self, sample_records):
+        stats = compute_session_stats(sample_records, metric="output", days=14)
+        assert stats["avg"] > 0
+        total = sum(r["output_tokens"] for r in sample_records)
+        assert abs(stats["avg"] * stats["count"] - total) < 1
+
+    def test_largest_session(self, sample_records):
+        stats = compute_session_stats(sample_records, metric="output", days=14)
+        assert stats["largest_tokens"] > 0
+        assert isinstance(stats["largest_project"], str)
+
+    def test_sessions_per_day(self, sample_records):
+        stats = compute_session_stats(sample_records, metric="output", days=14)
+        assert abs(stats["sessions_per_day"] - 58 / 14) < 0.1
+
+    def test_empty(self, empty_records):
+        stats = compute_session_stats(empty_records, metric="output", days=14)
+        assert stats["count"] == 0
+        assert stats["avg"] == 0
+
+
+class TestHourlyBreakdown:
+    def test_peak_window(self, sample_records):
+        stats = compute_hourly_breakdown(sample_records, metric="output")
+        assert 0 <= stats["peak_window_start"] < 24
+        assert 0 < stats["peak_window_pct"] <= 100
+
+    def test_hour_totals(self, sample_records):
+        stats = compute_hourly_breakdown(sample_records, metric="output")
+        assert stats["hour_totals"].get(9, 0) > 0
+        assert stats["hour_totals"].get(3, 0) == 0
+
+    def test_weekday_weekend_split(self, sample_records):
+        stats = compute_hourly_breakdown(sample_records, metric="output")
+        weekday_total = sum(stats["weekday_hours"].values())
+        weekend_total = sum(stats["weekend_hours"].values())
+        assert weekday_total > weekend_total
+
+    def test_empty(self, empty_records):
+        stats = compute_hourly_breakdown(empty_records, metric="output")
+        assert stats["peak_window_pct"] == 0
