@@ -242,3 +242,22 @@ class TestApiCost:
     def test_empty(self, empty_records):
         stats = compute_api_cost(empty_records, days=14)
         assert stats["total"] == 0.0
+
+
+from claude_usage_analytics import compute_all
+
+
+class TestComputeAll:
+    def test_has_all_sections(self, sample_records):
+        stats = compute_all(sample_records, metric="output", days=14, top_n=5)
+        assert "burn_rate" in stats
+        assert "sessions" in stats
+        assert "hours" in stats
+        assert "model_mix" in stats
+        assert "projects" in stats
+        assert "cost" in stats
+
+    def test_empty(self, empty_records):
+        stats = compute_all(empty_records, metric="output", days=14, top_n=5)
+        assert stats["burn_rate"]["total"] == 0
+        assert stats["sessions"]["count"] == 0

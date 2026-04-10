@@ -315,3 +315,15 @@ def compute_api_cost(records: list, days: int) -> dict:
         "by_project": {k: round(v, 2) for k, v in by_project.items()},
         "by_model": {k: round(v, 2) for k, v in by_model.items()},
     }
+
+
+def compute_all(records: list, metric: str, days: int, top_n: int) -> dict:
+    """Compute all analytics in one call."""
+    return {
+        "burn_rate": compute_burn_rate(records, metric, days),
+        "sessions": compute_session_stats(records, metric, days),
+        "hours": compute_hourly_breakdown(records, metric),
+        "model_mix": compute_model_mix(records),
+        "projects": compute_project_rankings(records, metric, top_n),
+        "cost": compute_api_cost(records, days),
+    }
