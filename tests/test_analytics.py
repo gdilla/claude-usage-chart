@@ -159,3 +159,86 @@ class TestHourlyBreakdown:
     def test_empty(self, empty_records):
         stats = compute_hourly_breakdown(empty_records, metric="output")
         assert stats["peak_window_pct"] == 0
+
+
+import pytest
+from claude_usage_analytics import (
+    compute_model_mix,
+    compute_project_rankings,
+    compute_api_cost,
+)
+
+
+class TestModelMix:
+    def test_three_models(self, sample_records):
+        stats = compute_model_mix(sample_records)
+        names = [m["name"] for m in stats["models"]]
+        assert "opus" in names
+        assert "sonnet" in names
+        assert "haiku" in names
+
+    def test_percentages_sum_100(self, sample_records):
+        stats = compute_model_mix(sample_records)
+        total_pct = sum(m["pct"] for m in stats["models"])
+        assert abs(total_pct - 100.0) < 0.5
+
+    def test_cost_positive(self, sample_records):
+        stats = compute_model_mix(sample_records)
+        for m in stats["models"]:
+            assert m["est_cost"] >= 0
+
+    def test_empty(self, empty_records):
+        stats = compute_model_mix(empty_records)
+        assert stats["models"] == []
+
+
+class TestProjectRankings:
+    def test_top_n(self, sample_records):
+        rankings = compute_project_rankings(
+            sample_records, metric="output", top_n=2
+        )
+        assert len(rankings) <= 2
+
+    def test_has_fields(self, sample_records):
+        rankings = compute_project_rankings(
+            sample_records, metric="output", top_n=5
+        )
+        for r in rankings:
+            assert "name" in r
+            assert "total_tokens" in r
+            assert "session_count" in r
+            assert "primary_model" in r
+            assert "est_cost" in r
+
+    def test_sorted_descending(self, sample_records):
+        rankings = compute_project_rankings(
+            sample_records, metric="output", top_n=5
+        )
+        totals = [r["total_tokens"] for r in rankings]
+        assert totals == sorted(totals, reverse=True)
+
+
+class TestApiCost:
+    def test_total_positive(self, sample_records):
+        stats = compute_api_cost(sample_records, days=14)
+        assert stats["total"] > 0
+
+    def test_per_day(self, sample_records):
+        stats = compute_api_cost(sample_records, days=14)
+        assert abs(stats["per_day_avg"] - stats["total"] / 14) < 0.01
+
+    def test_by_project(self, sample_records):
+        stats = compute_api_cost(sample_records, days=14)
+        assert sum(stats["by_project"].values()) == pytest.approx(
+            stats["total"], abs=0.01
+        )
+
+    def test_by_model(self, sample_records):
+        stats = compute_api_cost(sample_records, days=14)
+        assert sum(stats["by_model"].values()) == pytest.approx(
+            stats["total"], abs=0.01
+        )
+
+    def test_empty(self, empty_records):
+        stats = compute_api_cost(empty_records, days=14)
+        assert stats["total"] == 0.0

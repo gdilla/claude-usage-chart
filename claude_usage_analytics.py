@@ -208,3 +208,110 @@ def compute_hourly_breakdown(records: list, metric: str) -> dict:
         "weekday_hours": dict(weekday_hours),
         "weekend_hours": dict(weekend_hours),
     }
+
+
+def compute_model_mix(records: list) -> dict:
+    """Compute token and cost breakdown by model."""
+    if not records:
+        return {"models": []}
+
+    by_model = defaultdict(lambda: {
+        "input": 0, "output": 0, "cache_write": 0, "cache_read": 0,
+    })
+
+    for r in records:
+        key = resolve_model_name(r.get("model", ""))
+        if key == "unknown":
+            continue
+        by_model[key]["input"] += r["input_tokens"]
+        by_model[key]["output"] += r["output_tokens"]
+        by_model[key]["cache_write"] += r["cache_creation_input_tokens"]
+        by_model[key]["cache_read"] += r["cache_read_input_tokens"]
+
+    grand_total = sum(
+        m["input"] + m["output"] for m in by_model.values()
+    )
+
+    models = []
+    for name in sorted(by_model, key=lambda k: by_model[k]["input"] + by_model[k]["output"], reverse=True):
+        m = by_model[name]
+        total_tokens = m["input"] + m["output"]
+        pricing = API_PRICING.get(name, API_PRICING["sonnet"])
+        est_cost = (
+            m["input"] * pricing["input"]
+            + m["output"] * pricing["output"]
+            + m["cache_write"] * pricing["cache_write"]
+            + m["cache_read"] * pricing["cache_read"]
+        ) / 1_000_000
+
+        models.append({
+            "name": name,
+            "input_tokens": m["input"],
+            "output_tokens": m["output"],
+            "cache_write": m["cache_write"],
+            "cache_read": m["cache_read"],
+            "total_tokens": total_tokens,
+            "pct": round(total_tokens / grand_total * 100, 1) if grand_total else 0,
+            "est_cost": round(est_cost, 2),
+        })
+
+    return {"models": models}
+
+
+def compute_project_rankings(records: list, metric: str, top_n: int) -> list:
+    """Rank projects by token usage."""
+    if not records:
+        return []
+
+    projects = defaultdict(lambda: {
+        "total": 0, "sessions": set(), "models": defaultdict(int), "cost": 0.0,
+    })
+
+    for r in records:
+        p = projects[r["project"]]
+        p["total"] += _get_metric_value(r, metric)
+        p["sessions"].add(r["session"])
+        model_key = resolve_model_name(r.get("model", ""))
+        p["models"][model_key] += _get_metric_value(r, metric)
+        p["cost"] += get_record_cost(r)
+
+    ranked = sorted(projects.items(), key=lambda x: x[1]["total"], reverse=True)
+
+    return [
+        {
+            "name": name,
+            "total_tokens": data["total"],
+            "session_count": len(data["sessions"]),
+            "primary_model": max(data["models"], key=data["models"].get),
+            "est_cost": round(data["cost"], 2),
+        }
+        for name, data in ranked[:top_n]
+    ]
+
+
+def compute_api_cost(records: list, days: int) -> dict:
+    """Compute equivalent API cost breakdown."""
+    if not records:
+        return {
+            "total": 0.0, "per_day_avg": 0.0,
+            "by_project": {}, "by_model": {},
+        }
+
+    by_project = defaultdict(float)
+    by_model = defaultdict(float)
+    total = 0.0
+
+    for r in records:
+        cost = get_record_cost(r)
+        total += cost
+        by_project[r["project"]] += cost
+        by_model[resolve_model_name(r.get("model", ""))] += cost
+
+    by_model.pop("unknown", None)
+
+    return {
+        "total": round(total, 2),
+        "per_day_avg": round(total / days, 2) if days > 0 else 0.0,
+        "by_project": {k: round(v, 2) for k, v in by_project.items()},
+        "by_model": {k: round(v, 2) for k, v in by_model.items()},
+    }
