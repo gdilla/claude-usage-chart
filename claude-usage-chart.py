@@ -90,17 +90,21 @@ def parse_all_transcripts(base_dir: str, cutoff_date: datetime):
                     if ts < cutoff_date:
                         continue
 
-                    local_date = ts.astimezone().strftime("%Y-%m-%d")
+                    local_ts = ts.astimezone()
+                    local_date = local_ts.strftime("%Y-%m-%d")
                     cwd = record.get("cwd", "")
                     project = derive_project_name(cwd)
 
                     yield {
                         "date": local_date,
                         "project": project,
+                        "model": message.get("model", ""),
                         "input_tokens": usage.get("input_tokens", 0) or 0,
                         "output_tokens": usage.get("output_tokens", 0) or 0,
                         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
                         "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) or 0,
+                        "hour": local_ts.hour,
+                        "weekday": local_ts.weekday(),
                         "timestamp": ts,
                         "session": filepath,
                     }
@@ -489,6 +493,12 @@ def main():
                         help="Filter to a specific project name (or pass a cwd path to auto-derive)")
     parser.add_argument("--sessions", type=int, nargs="?", const=10, default=None,
                         help="Show last N sessions instead of daily view (default: 10)")
+    parser.add_argument("--report", action="store_true",
+                        help="Print analytics summary report instead of chart")
+    parser.add_argument("--html", type=str, default=None, metavar="PATH",
+                        help="Generate HTML report and save to file")
+    parser.add_argument("--cost", action="store_true",
+                        help="Show equivalent API cost estimate")
     args = parser.parse_args()
 
     base_dir = os.path.expanduser("~/.claude/projects")
@@ -519,6 +529,24 @@ def main():
         print("No usage data found.", file=sys.stderr)
         sys.exit(0)
 
+    # Analytics report modes
+    if args.report or args.html:
+        from claude_usage_analytics import compute_all, render_terminal_report, render_html_report
+
+        stats = compute_all(records, args.metric, args.days, args.top)
+
+        if args.report:
+            render_terminal_report(stats, args.metric, args.days)
+
+        if args.html:
+            render_html_report(stats, records, args.metric, args.days, args.html)
+
+        if not args.report:
+            cost = stats["cost"]
+            print(f"Est. API cost: ${cost['total']:.2f} "
+                  f"(${cost['per_day_avg']:.2f}/day)", file=sys.stderr)
+        return
+
     # Peak hours summary (always print)
     peak = peak_hours_summary(records, args.metric)
     if peak:
@@ -532,6 +560,12 @@ def main():
         total_tokens = sum(sum(data[p]) for p in projects)
         print(f"Total {args.metric} tokens across {len(labels)} sessions: "
               f"{format_tokens(total_tokens)}", file=sys.stderr)
+
+        if args.cost:
+            from claude_usage_analytics import compute_api_cost
+            cost_stats = compute_api_cost(records, args.days)
+            print(f"Est. API cost: ${cost_stats['total']:.2f} "
+                  f"(${cost_stats['per_day_avg']:.2f}/day)", file=sys.stderr)
 
         if args.terminal:
             chart_terminal_sessions(labels, projects, data, args.metric)
@@ -550,6 +584,12 @@ def main():
 
         total_tokens = sum(sum(data[p]) for p in projects)
         print(f"Total {args.metric} tokens: {format_tokens(total_tokens)}", file=sys.stderr)
+
+        if args.cost:
+            from claude_usage_analytics import compute_api_cost
+            cost_stats = compute_api_cost(records, args.days)
+            print(f"Est. API cost: ${cost_stats['total']:.2f} "
+                  f"(${cost_stats['per_day_avg']:.2f}/day)", file=sys.stderr)
 
         if args.terminal:
             chart_terminal(dates, projects, data, args.metric)
