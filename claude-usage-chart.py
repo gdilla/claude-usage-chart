@@ -90,17 +90,23 @@ def parse_all_transcripts(base_dir: str, cutoff_date: datetime):
                     if ts < cutoff_date:
                         continue
 
-                    local_date = ts.astimezone().strftime("%Y-%m-%d")
+                    local_ts = ts.astimezone()
+                    local_date = local_ts.strftime("%Y-%m-%d")
                     cwd = record.get("cwd", "")
                     project = derive_project_name(cwd)
 
                     yield {
                         "date": local_date,
                         "project": project,
+                        "model": message.get("model", ""),
                         "input_tokens": usage.get("input_tokens", 0) or 0,
                         "output_tokens": usage.get("output_tokens", 0) or 0,
                         "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0) or 0,
                         "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0) or 0,
+                        "hour": local_ts.hour,
+                        "weekday": local_ts.weekday(),
+                        "timestamp": ts,
+                        "session": filepath,
                     }
         except (OSError, IOError):
             continue
@@ -165,6 +171,95 @@ def aggregate(records, days: int, top_n: int, metric: str):
     return dates, projects, data
 
 
+def aggregate_sessions(records, n_sessions: int, top_n: int, metric: str):
+    """Aggregate records into per-session chart data, last N sessions.
+
+    Returns:
+        labels: list of session start-time strings
+        projects: ordered list of project names
+        data: dict mapping project -> list of values per session
+    """
+    sessions = defaultdict(lambda: {"start": None, "by_project": defaultdict(int)})
+
+    for rec in records:
+        sid = rec["session"]
+        s = sessions[sid]
+        val = get_metric_value(rec, metric)
+        ts = rec["timestamp"]
+        if s["start"] is None or ts < s["start"]:
+            s["start"] = ts
+        s["by_project"][rec["project"]] += val
+
+    # Sort by start time, take last N
+    sorted_sessions = sorted(sessions.items(), key=lambda x: x[1]["start"])
+    last_n = sorted_sessions[-n_sessions:]
+
+    # Determine top projects across these sessions
+    project_totals = defaultdict(int)
+    for _, s in last_n:
+        for p, v in s["by_project"].items():
+            project_totals[p] += v
+    ranked = sorted(project_totals.items(), key=lambda x: x[1], reverse=True)
+    top_projects = [name for name, _ in ranked[:top_n]]
+    other_projects = {name for name, _ in ranked[top_n:]}
+    projects = top_projects + (["Other"] if other_projects else [])
+
+    labels = []
+    data = {p: [] for p in projects}
+
+    for _, s in last_n:
+        labels.append(s["start"].astimezone().strftime("%b %d %-I:%M%p").lower())
+        for p in top_projects:
+            data[p].append(s["by_project"].get(p, 0))
+        if other_projects:
+            other_val = sum(s["by_project"].get(p, 0) for p in other_projects)
+            data["Other"].append(other_val)
+
+    return labels, projects, data
+
+
+def peak_hours_summary(records, metric: str) -> str:
+    """Analyze usage by hour-of-day, return a summary string."""
+    hour_totals = defaultdict(int)
+    for rec in records:
+        hour = rec["timestamp"].astimezone().hour
+        hour_totals[hour] += get_metric_value(rec, metric)
+
+    if not hour_totals:
+        return ""
+
+    total = sum(hour_totals.values())
+
+    # Find the peak 4-hour window (sliding over 24h clock)
+    best_start = 0
+    best_sum = 0
+    for start in range(24):
+        window_sum = sum(hour_totals.get((start + h) % 24, 0) for h in range(4))
+        if window_sum > best_sum:
+            best_sum = window_sum
+            best_start = start
+
+    end = (best_start + 4) % 24
+    pct = (best_sum / total * 100) if total else 0
+
+    def fmt_hour(h):
+        if h == 0:
+            return "12am"
+        if h == 12:
+            return "12pm"
+        return f"{h}am" if h < 12 else f"{h - 12}pm"
+
+    # Also find the single peak hour
+    peak_hour = max(hour_totals, key=hour_totals.get)
+    peak_hour_pct = (hour_totals[peak_hour] / total * 100) if total else 0
+
+    return (
+        f"Peak window: {fmt_hour(best_start)}\u2013{fmt_hour(end)} "
+        f"({pct:.0f}% of {metric} tokens)  \u00b7  "
+        f"Busiest hour: {fmt_hour(peak_hour)} ({peak_hour_pct:.0f}%)"
+    )
+
+
 def format_tokens(n: int) -> str:
     """Format token count with K/M suffix."""
     if n >= 1_000_000:
@@ -216,6 +311,56 @@ def chart_matplotlib(dates, projects, data, metric, output_path=None):
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(dates) // 15)))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
     fig.autofmt_xdate(rotation=45)
+
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_axisbelow(True)
+    plt.tight_layout()
+
+    if output_path:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        print(f"Chart saved to {output_path}")
+    else:
+        plt.show()
+
+
+def chart_matplotlib_sessions(labels, projects, data, metric, output_path=None):
+    """Render a stacked bar chart for sessions using matplotlib."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib not available, falling back to terminal chart.", file=sys.stderr)
+        chart_terminal_sessions(labels, projects, data, metric)
+        return
+
+    fig, ax = plt.subplots(figsize=(max(12, len(labels) * 0.8), 6))
+    cmap = plt.get_cmap("tab20")
+    colors = [cmap(i / max(len(projects), 1)) for i in range(len(projects))]
+
+    x = range(len(labels))
+    bottom = [0] * len(labels)
+
+    for i, project in enumerate(projects):
+        values = data[project]
+        ax.bar(x, values, bottom=bottom, label=project,
+               color=colors[i], width=0.7, edgecolor="white", linewidth=0.3)
+        bottom = [b + v for b, v in zip(bottom, values)]
+
+    # Add total labels on top
+    for i, total in enumerate(bottom):
+        if total > 0:
+            ax.text(i, total, format_tokens(total), ha="center", va="bottom",
+                    fontsize=7, color="#444444")
+
+    grand_total = sum(bottom)
+    ax.set_title(
+        f"Claude Code Token Usage by Session ({metric} tokens)\n"
+        f"Last {len(labels)} sessions  \u00b7  Total: {format_tokens(grand_total)}",
+        fontsize=14, fontweight="bold")
+    ax.set_ylabel("Tokens")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(labels, rotation=55, ha="right", fontsize=7)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: format_tokens(int(v))))
 
     ax.grid(axis="y", alpha=0.3)
     ax.set_axisbelow(True)
@@ -286,6 +431,49 @@ def chart_terminal(dates, projects, data, metric):
     print()
 
 
+def chart_terminal_sessions(labels, projects, data, metric):
+    """Render a horizontal stacked bar chart for sessions in the terminal."""
+    term_width = min(os.get_terminal_size().columns, 120) if sys.stdout.isatty() else 80
+    label_width = 18
+    bar_width = term_width - label_width - 12
+
+    daily_totals = []
+    for i in range(len(labels)):
+        total = sum(data[p][i] for p in projects)
+        daily_totals.append(total)
+    max_total = max(daily_totals) if daily_totals else 1
+
+    print(f"\n  Claude Code Token Usage by Session ({metric} tokens)")
+    print(f"  {'─' * (term_width - 4)}")
+    legend_parts = []
+    for i, project in enumerate(projects):
+        color = TERM_COLORS[i % len(TERM_COLORS)]
+        total = sum(data[project])
+        legend_parts.append(f"  \033[48;5;{color}m  \033[0m {project} ({format_tokens(total)})")
+    for i in range(0, len(legend_parts), 3):
+        print("".join(legend_parts[i:i + 3]))
+    print()
+
+    for i, label in enumerate(labels):
+        total = daily_totals[i]
+        bar = ""
+        remaining_width = bar_width
+        for j, project in enumerate(projects):
+            val = data[project][i]
+            if val == 0 or max_total == 0:
+                continue
+            seg_width = max(1, round(val / max_total * bar_width)) if val > 0 else 0
+            seg_width = min(seg_width, remaining_width)
+            color = TERM_COLORS[j % len(TERM_COLORS)]
+            bar += f"\033[48;5;{color}m{' ' * seg_width}\033[0m"
+            remaining_width -= seg_width
+
+        total_str = format_tokens(total)
+        print(f"  {label:>{label_width}} {bar} {total_str}")
+
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Visualize Claude Code token usage by day and project."
@@ -303,6 +491,14 @@ def main():
                         help="Force terminal chart even if matplotlib is available")
     parser.add_argument("--project", type=str, default=None,
                         help="Filter to a specific project name (or pass a cwd path to auto-derive)")
+    parser.add_argument("--sessions", type=int, nargs="?", const=10, default=None,
+                        help="Show last N sessions instead of daily view (default: 10)")
+    parser.add_argument("--report", action="store_true",
+                        help="Print analytics summary report instead of chart")
+    parser.add_argument("--html", type=str, default=None, metavar="PATH",
+                        help="Generate HTML report and save to file")
+    parser.add_argument("--cost", action="store_true",
+                        help="Show equivalent API cost estimate")
     args = parser.parse_args()
 
     base_dir = os.path.expanduser("~/.claude/projects")
@@ -333,22 +529,78 @@ def main():
         print("No usage data found.", file=sys.stderr)
         sys.exit(0)
 
-    dates, projects, data = aggregate(records, args.days, args.top, args.metric)
+    # Analytics report modes
+    if args.report or args.html:
+        from claude_usage_analytics import compute_all, render_terminal_report, render_html_report
 
-    total_tokens = sum(sum(data[p]) for p in projects)
-    print(f"Total {args.metric} tokens: {format_tokens(total_tokens)}", file=sys.stderr)
+        stats = compute_all(records, args.metric, args.days, args.top)
 
-    if args.terminal:
-        chart_terminal(dates, projects, data, args.metric)
-    elif args.output:
-        chart_matplotlib(dates, projects, data, args.metric, output_path=args.output)
+        if args.report:
+            render_terminal_report(stats, args.metric, args.days)
+
+        if args.html:
+            render_html_report(stats, records, args.metric, args.days, args.html)
+
+        if not args.report:
+            cost = stats["cost"]
+            print(f"Est. API cost: ${cost['total']:.2f} "
+                  f"(${cost['per_day_avg']:.2f}/day)", file=sys.stderr)
+        return
+
+    # Peak hours summary (always print)
+    peak = peak_hours_summary(records, args.metric)
+    if peak:
+        print(peak, file=sys.stderr)
+
+    if args.sessions is not None:
+        # Session mode
+        labels, projects, data = aggregate_sessions(
+            records, args.sessions, args.top, args.metric)
+
+        total_tokens = sum(sum(data[p]) for p in projects)
+        print(f"Total {args.metric} tokens across {len(labels)} sessions: "
+              f"{format_tokens(total_tokens)}", file=sys.stderr)
+
+        if args.cost:
+            from claude_usage_analytics import compute_api_cost
+            cost_stats = compute_api_cost(records, args.days)
+            print(f"Est. API cost: ${cost_stats['total']:.2f} "
+                  f"(${cost_stats['per_day_avg']:.2f}/day)", file=sys.stderr)
+
+        if args.terminal:
+            chart_terminal_sessions(labels, projects, data, args.metric)
+        elif args.output:
+            chart_matplotlib_sessions(labels, projects, data, args.metric,
+                                      output_path=args.output)
+        else:
+            try:
+                import matplotlib
+                chart_matplotlib_sessions(labels, projects, data, args.metric)
+            except ImportError:
+                chart_terminal_sessions(labels, projects, data, args.metric)
     else:
-        # Try matplotlib, fall back to terminal
-        try:
-            import matplotlib
-            chart_matplotlib(dates, projects, data, args.metric)
-        except ImportError:
+        # Daily mode (original)
+        dates, projects, data = aggregate(records, args.days, args.top, args.metric)
+
+        total_tokens = sum(sum(data[p]) for p in projects)
+        print(f"Total {args.metric} tokens: {format_tokens(total_tokens)}", file=sys.stderr)
+
+        if args.cost:
+            from claude_usage_analytics import compute_api_cost
+            cost_stats = compute_api_cost(records, args.days)
+            print(f"Est. API cost: ${cost_stats['total']:.2f} "
+                  f"(${cost_stats['per_day_avg']:.2f}/day)", file=sys.stderr)
+
+        if args.terminal:
             chart_terminal(dates, projects, data, args.metric)
+        elif args.output:
+            chart_matplotlib(dates, projects, data, args.metric, output_path=args.output)
+        else:
+            try:
+                import matplotlib
+                chart_matplotlib(dates, projects, data, args.metric)
+            except ImportError:
+                chart_terminal(dates, projects, data, args.metric)
 
 
 if __name__ == "__main__":

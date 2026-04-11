@@ -3,17 +3,22 @@
 ## Tech Stack
 - Python 3.9+ (stdlib only, no required dependencies)
 - matplotlib (declared via PEP 723 inline script metadata; auto-installed by `uv run`)
-- Single-file CLI script: `claude-usage-chart.py`
+- CLI entry point: `claude-usage-chart.py`
+- Analytics engine: `claude_usage_analytics.py`
 - Helper script: `generate_example.py` (generates fake chart for README)
 
 ## Project Structure
 ```
 claude-usage-chart/
-├── claude-usage-chart.py   — Main CLI script (all logic in one file)
-├── generate_example.py     — Generates fake example.png for README
-├── example.png             — Fake chart image used in README
-├── LICENSE                 — MIT
-└── README.md               — Includes setup guide for /burn slash command
+├── claude-usage-chart.py        — CLI entry point, JSONL parser, chart renderers
+├── claude_usage_analytics.py    — Analytics engine + report renderers
+├── generate_example.py          — Generates fake example.png for README
+├── example.png                  — Fake chart image used in README
+├── tests/
+│   ├── conftest.py              — Shared test fixtures (synthetic records)
+│   └── test_analytics.py        — Analytics unit tests (40 tests)
+├── LICENSE                      — MIT
+└── README.md                    — Includes setup guide for /burn slash command
 ```
 
 ## How It Works
@@ -24,11 +29,23 @@ claude-usage-chart/
 5. Renders stacked bar chart (matplotlib or ANSI terminal fallback)
 
 ## Key Functions
+
+### claude-usage-chart.py (CLI + charts)
 - `derive_project_name(cwd)` — extracts short name, strips worktree paths
 - `parse_all_transcripts(base_dir, cutoff)` — yields usage records from JSONL
 - `aggregate(records, days, top_n, metric)` — builds chart-ready data matrix
 - `chart_matplotlib(...)` — stacked bar chart with daily totals and grand total
 - `chart_terminal(...)` — ANSI colored horizontal bars fallback
+
+### claude_usage_analytics.py (analytics + reports)
+- `compute_burn_rate()` — daily/weekly/weekday/weekend averages, trend
+- `compute_session_stats()` — session count, avg, median, largest
+- `compute_hourly_breakdown()` — 24h heatmap, peak windows
+- `compute_model_mix()` — token/cost breakdown by model
+- `compute_project_rankings()` — top N projects with stats
+- `compute_api_cost()` — equivalent API cost estimates
+- `render_terminal_report()` — ANSI-formatted terminal summary
+- `render_html_report()` — self-contained HTML dashboard with Chart.js
 
 ## JSONL Data Format
 - Timestamps: ISO 8601 UTC (`2026-03-08T17:15:12.034Z`)
@@ -38,6 +55,10 @@ claude-usage-chart/
 ## Dev Workflow
 - Run with: `uv run claude-usage-chart.py`
 - Test terminal: `python3 claude-usage-chart.py --terminal --days 7`
+- Analytics report: `python3 claude-usage-chart.py --report --days 7`
+- HTML report: `python3 claude-usage-chart.py --html report.html --days 7`
+- Cost overlay: `python3 claude-usage-chart.py --terminal --days 7 --cost`
+- Run tests: `python3 -m pytest tests/ -v`
 - Generate example: `uv run generate_example.py`
 
 ## Code Search
