@@ -4,6 +4,7 @@ Pure functions: records in, stats out. No CLI logic.
 """
 
 import sys
+import json as _json
 import statistics
 from collections import defaultdict
 
@@ -438,3 +439,235 @@ def render_terminal_report(stats: dict, metric: str, days: int):
               f"Weekend peak: {_fmt_hour(we_peak)}")
 
     print()
+
+
+def _build_heatmap_bars(hour_data: list, max_hour: int) -> str:
+    """Build HTML for hourly heatmap bar elements."""
+    bars = []
+    for h in range(24):
+        height = max(5, int(hour_data[h] / max_hour * 100)) if max_hour > 0 else 5
+        opacity = max(0.15, hour_data[h] / max_hour) if max_hour > 0 else 0.15
+        bars.append(
+            f'<div class="heatmap-bar" style="height:{height}%;'
+            f'background:rgba(78,121,167,{opacity:.2f})"></div>'
+        )
+    return "\n      ".join(bars)
+
+
+def _build_heatmap_labels() -> str:
+    """Build HTML for hourly heatmap hour labels."""
+    labels = []
+    for h in range(24):
+        text = "" if h % 3 else _fmt_hour(h)
+        labels.append(f"<span>{text}</span>")
+    return "\n      ".join(labels)
+
+
+def render_html_report(stats: dict, records: list, metric: str, days: int, output_path: str):
+    """Generate a self-contained HTML report file."""
+    br = stats["burn_rate"]
+    sess = stats["sessions"]
+    hrs = stats["hours"]
+    mix = stats["model_mix"]
+    proj = stats["projects"]
+    cost = stats["cost"]
+
+    # Build daily chart data for Chart.js
+    day_totals = defaultdict(lambda: defaultdict(int))
+    project_names = {p["name"] for p in proj}
+    for r in records:
+        val = _get_metric_value(r, metric)
+        pname = r["project"] if r["project"] in project_names else "Other"
+        day_totals[r["date"]][pname] += val
+
+    sorted_dates = sorted(day_totals.keys())
+    all_projects = sorted(project_names) + (["Other"] if any(
+        r["project"] not in project_names for r in records
+    ) else [])
+
+    chart_datasets = []
+    colors = [
+        "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
+        "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
+        "#9c755f", "#bab0ac",
+    ]
+    for i, pname in enumerate(all_projects):
+        data_points = [day_totals[d].get(pname, 0) for d in sorted_dates]
+        chart_datasets.append({
+            "label": pname,
+            "data": data_points,
+            "backgroundColor": colors[i % len(colors)],
+        })
+
+    # Hourly heatmap data
+    hour_data = [hrs["hour_totals"].get(h, 0) for h in range(24)]
+    max_hour = max(hour_data) if any(hour_data) else 1
+
+    # Model mix for donut
+    model_labels = [m["name"].capitalize() for m in mix["models"]]
+    model_values = [m["total_tokens"] for m in mix["models"]]
+    model_colors = ["#e15759", "#4e79a7", "#59a14f", "#f28e2b", "#76b7b2"][:len(model_labels)]
+
+    trend_arrow = "&#x25B2;" if br["trend_pct"] > 0 else "&#x25BC;" if br["trend_pct"] < 0 else "&#x2500;"
+    trend_sign = "+" if br["trend_pct"] > 0 else ""
+
+    # Build model table rows
+    model_rows = ""
+    for m in mix["models"]:
+        model_rows += (f'<tr><td>{m["name"].capitalize()}</td>'
+                      f'<td>{_fmt_tokens(m["total_tokens"])}</td>'
+                      f'<td>{m["pct"]:.0f}%</td>'
+                      f'<td>{_fmt_cost(m["est_cost"])}</td></tr>\n')
+
+    # Build project table rows
+    project_rows = ""
+    for p in proj:
+        project_rows += (f'<tr><td>{p["name"]}</td>'
+                        f'<td>{_fmt_tokens(p["total_tokens"])}</td>'
+                        f'<td>{p["session_count"]}</td>'
+                        f'<td>{p["primary_model"].capitalize()}</td>'
+                        f'<td>{_fmt_cost(p["est_cost"])}</td></tr>\n')
+
+    heatmap_bars = _build_heatmap_bars(hour_data, max_hour)
+    heatmap_labels = _build_heatmap_labels()
+
+    peak_end = (hrs["peak_window_start"] + 4) % 24
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Usage Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 2rem; }}
+  .container {{ max-width: 1000px; margin: 0 auto; }}
+  h1 {{ font-size: 1.8rem; margin-bottom: 0.25rem; }}
+  .subtitle {{ color: #86868b; margin-bottom: 2rem; }}
+  .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }}
+  .card {{ background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+  .card-label {{ font-size: 0.75rem; color: #86868b; text-transform: uppercase; letter-spacing: 0.05em; }}
+  .card-value {{ font-size: 1.5rem; font-weight: 600; margin-top: 0.25rem; }}
+  .card-detail {{ font-size: 0.8rem; color: #86868b; margin-top: 0.25rem; }}
+  .section {{ background: white; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+  .section h2 {{ font-size: 1.1rem; margin-bottom: 1rem; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+  th, td {{ padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #f0f0f0; }}
+  th {{ font-size: 0.75rem; color: #86868b; text-transform: uppercase; letter-spacing: 0.05em; }}
+  .heatmap {{ display: flex; gap: 2px; align-items: flex-end; height: 60px; }}
+  .heatmap-bar {{ flex: 1; border-radius: 2px 2px 0 0; min-width: 0; }}
+  .heatmap-labels {{ display: flex; gap: 2px; font-size: 0.65rem; color: #86868b; }}
+  .heatmap-labels span {{ flex: 1; text-align: center; }}
+  .chart-container {{ position: relative; height: 300px; }}
+  .donut-container {{ position: relative; height: 200px; width: 200px; margin: 0 auto; }}
+  .model-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Claude Code Usage Report</h1>
+  <p class="subtitle">Last {days} days &middot; {_fmt_tokens(br['total'])} {metric} tokens &middot; Est. API cost: {_fmt_cost(cost['total'])}</p>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Daily Average</div>
+      <div class="card-value">{_fmt_tokens(br['daily_avg'])}</div>
+      <div class="card-detail">Weekday: {_fmt_tokens(br['weekday_avg'])} &middot; Weekend: {_fmt_tokens(br['weekend_avg'])}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Weekly Average</div>
+      <div class="card-value">{_fmt_tokens(br['weekly_avg'])}</div>
+      <div class="card-detail">Trend: {trend_arrow} {trend_sign}{br['trend_pct']:.0f}% vs prior</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Sessions</div>
+      <div class="card-value">{sess['count']}</div>
+      <div class="card-detail">Avg: {_fmt_tokens(int(sess['avg']))}/session</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Est. API Cost</div>
+      <div class="card-value">{_fmt_cost(cost['total'])}</div>
+      <div class="card-detail">{_fmt_cost(cost['per_day_avg'])}/day</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Daily Usage</h2>
+    <div class="chart-container"><canvas id="dailyChart"></canvas></div>
+  </div>
+
+  <div class="section">
+    <div class="model-grid">
+      <div>
+        <h2>Model Mix</h2>
+        <div class="donut-container"><canvas id="modelChart"></canvas></div>
+      </div>
+      <div>
+        <h2>Cost by Model</h2>
+        <table>
+          <tr><th>Model</th><th>Tokens</th><th>Share</th><th>Est. Cost</th></tr>
+          {model_rows}
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Top Projects</h2>
+    <table>
+      <tr><th>Project</th><th>Tokens</th><th>Sessions</th><th>Primary Model</th><th>Est. Cost</th></tr>
+      {project_rows}
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Usage by Hour</h2>
+    <div class="heatmap">
+      {heatmap_bars}
+    </div>
+    <div class="heatmap-labels">
+      {heatmap_labels}
+    </div>
+    <p style="margin-top:0.75rem;font-size:0.85rem;color:#86868b">
+      Peak: {_fmt_hour(hrs['peak_window_start'])}&ndash;{_fmt_hour(peak_end)} ({hrs['peak_window_pct']:.0f}%) &middot;
+      Busiest: {_fmt_hour(hrs['peak_hour'])} ({hrs['peak_hour_pct']:.0f}%)
+    </p>
+  </div>
+</div>
+
+<script>
+const dailyCtx = document.getElementById('dailyChart').getContext('2d');
+new Chart(dailyCtx, {{
+  type: 'bar',
+  data: {{
+    labels: {_json.dumps(sorted_dates)},
+    datasets: {_json.dumps(chart_datasets)}
+  }},
+  options: {{
+    responsive: true, maintainAspectRatio: false,
+    scales: {{
+      x: {{ stacked: true }},
+      y: {{ stacked: true, ticks: {{ callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v }} }}
+    }},
+    plugins: {{ legend: {{ position: 'bottom', labels: {{ boxWidth: 12 }} }} }}
+  }}
+}});
+
+const modelCtx = document.getElementById('modelChart').getContext('2d');
+new Chart(modelCtx, {{
+  type: 'doughnut',
+  data: {{
+    labels: {_json.dumps(model_labels)},
+    datasets: [{{ data: {_json.dumps(model_values)}, backgroundColor: {_json.dumps(model_colors)} }}]
+  }},
+  options: {{ responsive: true, maintainAspectRatio: false, plugins: {{ legend: {{ position: 'bottom' }} }} }}
+}});
+</script>
+</body>
+</html>"""
+
+    with open(output_path, "w") as f:
+        f.write(html)
+    print(f"Report saved to {output_path}", file=sys.stderr)
